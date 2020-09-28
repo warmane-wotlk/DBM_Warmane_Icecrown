@@ -14,9 +14,12 @@ mod:RegisterEvents(
 	"SPELL_AURA_APPLIED_DOSE",
 	"SPELL_AURA_REFRESH",
 	"SPELL_AURA_REMOVED",
-	"UNIT_HEALTH"
+	"UNIT_HEALTH",
+	"CHAT_MSG_RAID_BOSS_EMOTE"
 )
 
+
+local gooEmote						= "%s cast Malleable Goo!"
 local warnSlimePuddle				= mod:NewSpellAnnounce(70341, 2)
 local warnUnstableExperimentSoon	= mod:NewSoonAnnounce(70351, 3)
 local warnUnstableExperiment		= mod:NewSpellAnnounce(70351, 4)
@@ -39,6 +42,9 @@ local specWarnMalleableGoo			= mod:NewSpecialWarning("SpecWarnMalleableGoo")
 local specWarnMalleableGooNear		= mod:NewSpecialWarning("SpecWarnMalleableGooNear")
 local specWarnChokingGasBomb		= mod:NewSpecialWarningSpell(71255, mod:IsTank())
 local specWarnMalleableGooCast		= mod:NewSpecialWarningSpell(72295, false)
+
+local specWarnMalleableGooSoon		= mod:NewSpecialWarning("Malleable Goo Soon")
+
 local specWarnOozeVariable			= mod:NewSpecialWarningYou(70352)		-- Heroic Ability
 local specWarnGasVariable			= mod:NewSpecialWarningYou(70353)		-- Heroic Ability
 local specWarnUnboundPlague			= mod:NewSpecialWarningYou(72856)		-- Heroic Ability
@@ -69,13 +75,13 @@ mod:AddBoolOption("UnboundPlagueIcon")					-- icon on the player with active buf
 mod:AddBoolOption("GooArrow")
 mod:AddBoolOption("YellOnMalleableGoo", true, "announce")
 mod:AddBoolOption("YellOnUnbound", true, "announce")
+mod:AddBoolOption("SpecWarnMalleableGooSoon")
 mod:AddBoolOption("BypassLatencyCheck", false)--Use old scan method without syncing or latency check (less reliable but not dependant on other DBM users in raid)
 
 local warned_preP2 = false
 local warned_preP3 = false
 local spamPuddle = 0
 local spamGas = 0
-local phase = 0
 
 function mod:OnCombatStart(delay)
 	berserkTimer:Start(-delay)
@@ -84,7 +90,7 @@ function mod:OnCombatStart(delay)
 	warnUnstableExperimentSoon:Schedule(25-delay)
 	warned_preP2 = false
 	warned_preP3 = false
-	phase = 1
+	self.vb.phase = 1
 	if mod:IsDifficulty("heroic10") or mod:IsDifficulty("heroic25") then
 		timerUnboundPlagueCD:Start(10-delay)
 	end
@@ -167,8 +173,8 @@ function mod:SPELL_CAST_START(args)
 end
 
 function mod:NextPhase()
-	phase = phase + 1
-	if phase == 2 then
+	self.vb.phase = self.vb.phase + 1
+	if self.vb.phase == 2 then
 		warnUnstableExperimentSoon:Schedule(15)
 		timerUnstableExperimentCD:Start(20)
 		timerSlimePuddleCD:Start(10)
@@ -177,7 +183,7 @@ function mod:NextPhase()
 		if mod:IsDifficulty("heroic10") or mod:IsDifficulty("heroic25") then
 			timerUnboundPlagueCD:Start(50)
 		end
-	elseif phase == 3 then
+	elseif self.vb.phase == 3 then
 		timerSlimePuddleCD:Start(15)
 		timerMalleableGooCD:Start(9)
 		timerChokingGasBombCD:Start(12)
@@ -190,7 +196,7 @@ end
 function mod:SPELL_CAST_SUCCESS(args)
 	if args:IsSpellID(70341) and GetTime() - spamPuddle > 5 then
 		warnSlimePuddle:Show()
-		if phase == 3 then
+		if self.vb.phase == 3 then
 			timerSlimePuddleCD:Start(20)--In phase 3 it's faster
 		else
 			timerSlimePuddleCD:Start()
@@ -200,11 +206,13 @@ function mod:SPELL_CAST_SUCCESS(args)
 		warnChokingGasBomb:Show()
 		specWarnChokingGasBomb:Show()
 		timerChokingGasBombCD:Start()
+		PlaySoundFile("Interface\\Addons\\DBM-Core\\sounds\\gasbomb.mp3")
 	elseif args:IsSpellID(72855, 72856, 70911) then
 		timerUnboundPlagueCD:Start()
-	elseif args:IsSpellID(72615, 72295, 74280, 74281) then
+	elseif args:IsSpellID(74281, 72615, 72295, 74280, 72458, 72874, 72873, 72550, 72549, 72548, 72297, 70853) then
 		warnMalleableGoo:Show()
 		specWarnMalleableGooCast:Show()
+		PlaySoundFile("Interface\\Addons\\DBM-Core\\sounds\\malleable.mp3")
 		if mod:IsDifficulty("heroic10") or mod:IsDifficulty("heroic25") then
 			timerMalleableGooCD:Start(20)
 		else
@@ -315,13 +323,43 @@ end
 
 --values subject to tuning depending on dps and his health pool
 function mod:UNIT_HEALTH(uId)
-	if phase == 1 and not warned_preP2 and self:GetUnitCreatureId(uId) == 36678 and UnitHealth(uId) / UnitHealthMax(uId) <= 0.83 then
+	if self.vb.phase == 1 and not warned_preP2 and self:GetUnitCreatureId(uId) == 36678 and UnitHealth(uId) / UnitHealthMax(uId) <= 0.83 then
 		warned_preP2 = true
 		warnPhase2Soon:Show()	
-	elseif phase == 2 and not warned_preP3 and self:GetUnitCreatureId(uId) == 36678 and UnitHealth(uId) / UnitHealthMax(uId) <= 0.38 then
+	elseif self.vb.phase == 2 and not warned_preP3 and self:GetUnitCreatureId(uId) == 36678 and UnitHealth(uId) / UnitHealthMax(uId) <= 0.38 then
 		warned_preP3 = true
 		warnPhase3Soon:Show()	
 	end
+end
+
+local function plaintext(msg)
+	local hex = "[0-9a-fA-F]";
+	local byte = hex .. hex;
+	local rgba = byte .. byte .. byte .. byte;
+
+	return msg:gsub("|c" .. rgba, ""):gsub("|r", ""):gsub("|T.-|t", "");
+end
+
+-- Malleable goo fix
+function mod:CHAT_MSG_RAID_BOSS_EMOTE(msg)
+	msg = plaintext(msg)
+    	local testSpecialWarning = mod:NewSpecialWarning("%s")
+	if msg == gooEmote then
+		warnMalleableGoo:Show()
+		specWarnMalleableGooCast:Show()
+		timerMalleableGooCD:Start(28)
+		PlaySoundFile("Interface\\Addons\\DBM-Core\\sounds\\malleable.mp3")
+        --soundMalleableGoo:Play(soundfile)
+    	--testSpecialWarning:Schedule(23, "Test Malleable Soon")
+        if self.Options.SpecWarnMalleableGooSoon then
+        	specWarnMalleableGooSoon:Schedule(23)
+    		self:ScheduleMethod(23, "MalleableSoon") 
+		end
+	end
+end
+
+function mod:MalleableSoon()
+       specWarnMalleableGooSoon:Show()      
 end
 
 function mod:OnSync(msg, target)
